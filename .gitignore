@@ -1,2 +1,5 @@
 # dont track large audio files
 data/*
+
+# do track .csv
+!data/UrbanSound8K.csv
