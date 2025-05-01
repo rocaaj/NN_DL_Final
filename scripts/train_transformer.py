@@ -28,7 +28,6 @@ EPOCHS           = 50
 LR               = 1e-4
 PATIENCE         = 10
 
-USE_CLASS_WEIGHTS = True
 USE_DROPOUT       = True
 USE_LABEL_SMOOTHING = True
 USE_MIXUP         = True
@@ -79,6 +78,27 @@ class EarlyStopping:
         else:
             self.counter += 1
         return self.counter >= self.patience
+
+# -----------------------------
+# Focal Loss Implementation
+# -----------------------------
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=1.0, gamma=2.0, reduction='mean'):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+        self.ce = nn.CrossEntropyLoss(reduction='none')
+
+    def forward(self, input, target):
+        ce_loss = self.ce(input, target)
+        pt = torch.exp(-ce_loss)
+        focal_loss = self.alpha * (1 - pt) ** self.gamma * ce_loss
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        return focal_loss
 
 # -----------------------------
 # Dataset using Precomputed MFCCs
@@ -170,12 +190,9 @@ def create_model_and_optimizer(label_map, label_counts):
     model = model.to(device)
     optimizer = optim.AdamW(model.parameters(), lr=LR)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
-    if USE_CLASS_WEIGHTS:
-        class_weights = [1.0 / label_counts[i] for i in range(len(label_map))]
-        class_weights = torch.FloatTensor(class_weights).to(device)
-        criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1 if USE_LABEL_SMOOTHING else 0.0)
-    else:
-        criterion = nn.CrossEntropyLoss(label_smoothing=0.1 if USE_LABEL_SMOOTHING else 0.0)
+
+    # Use Focal Loss instead of CrossEntropyLoss
+    criterion = FocalLoss(alpha=1.0, gamma=2.0)
     return model, optimizer, scheduler, criterion
 
 # -----------------------------
