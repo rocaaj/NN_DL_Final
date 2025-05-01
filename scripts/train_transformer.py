@@ -2,7 +2,7 @@ import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from sklearn.metrics import precision_recall_fscore_support
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -10,12 +10,12 @@ import librosa
 import numpy as np
 from mfcc_transformer import MFCCTransformerClassifier
 import random
+from collections import Counter
 
 # -----------------------------
 # Config
 # -----------------------------
 
-# set seeds for reproducibility
 random.seed(42)
 np.random.seed(42)
 torch.manual_seed(42)
@@ -28,16 +28,25 @@ BATCH_SIZE = 16
 EPOCHS = 10
 LR = 1e-4
 
+USE_CLASS_WEIGHTS = True
+USE_NORMALIZED_MFCC = True
+USE_WEIGHTED_SAMPLER = True
+USE_AUGMENTATION = True
+USE_DROPOUT = True
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 # -----------------------------
 # Dataset
 # -----------------------------
 class MFCCDataset(Dataset):
-    def __init__(self, df, data_dir, label_map, n_mfcc=40, max_len=200):
+    def __init__(self, df, data_dir, label_map, n_mfcc=40, max_len=200, training=True):
         self.data_dir = data_dir
         self.df = df
         self.label_map = label_map
         self.n_mfcc = n_mfcc
         self.max_len = max_len
+        self.training = training
 
     def __len__(self):
         return len(self.df)
@@ -49,6 +58,16 @@ class MFCCDataset(Dataset):
 
         y, sr = librosa.load(file_path, sr=None)
         mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=self.n_mfcc).T
+
+        if USE_NORMALIZED_MFCC:
+            mfcc = (mfcc - np.mean(mfcc, axis=0)) / (np.std(mfcc, axis=0) + 1e-6)
+
+        if USE_AUGMENTATION and self.training:
+            if random.random() < 0.3:
+                mfcc += np.random.normal(0, 0.05, mfcc.shape)
+            if random.random() < 0.3 and mfcc.shape[0] > 10:
+                t = random.randint(0, mfcc.shape[0] - 10)
+                mfcc[t:t+10] = 0
 
         if mfcc.shape[0] < self.max_len:
             pad = np.zeros((self.max_len - mfcc.shape[0], self.n_mfcc))
@@ -65,6 +84,7 @@ def train_one_epoch(model, dataloader, criterion, optimizer):
     model.train()
     total_loss = 0
     for x, y in dataloader:
+        x, y = x.to(device), y.to(device)
         optimizer.zero_grad()
         output = model(x)
         loss = criterion(output, y)
@@ -78,8 +98,9 @@ def evaluate(model, dataloader):
     y_true, y_pred = [], []
     with torch.no_grad():
         for x, y in dataloader:
+            x = x.to(device)
             output = model(x)
-            preds = output.argmax(dim=1).numpy()
+            preds = output.argmax(dim=1).cpu().numpy()
             y_pred.extend(preds)
             y_true.extend(y)
     return y_true, y_pred
@@ -115,11 +136,22 @@ def save_metrics_and_plots(metrics_df, class_names):
 # -----------------------------
 # Model + Optimizer Setup
 # -----------------------------
-def create_model_and_optimizer(label_map):
+def create_model_and_optimizer(label_map, label_counts):
     model = MFCCTransformerClassifier(n_mfcc=N_MFCC, num_classes=len(label_map), max_seq_len=MAX_LEN)
+    if USE_DROPOUT:
+        model.dropout = nn.Dropout(0.3)
+    model = model.to(device)
+
     optimizer = optim.AdamW(model.parameters(), lr=LR)
-    criterion = nn.CrossEntropyLoss()
-    return model, optimizer, criterion
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
+
+    if USE_CLASS_WEIGHTS:
+        class_weights = [1.0 / label_counts[i] for i in range(len(label_map))]
+        class_weights = torch.FloatTensor(class_weights).to(device)
+        criterion = nn.CrossEntropyLoss(weight=class_weights)
+    else:
+        criterion = nn.CrossEntropyLoss()
+    return model, optimizer, scheduler, criterion
 
 # -----------------------------
 # Fold Training Logic
@@ -129,13 +161,27 @@ def run_fold(fold, df, label_map):
     train_df = df[df['fold'] != fold].reset_index(drop=True)
     val_df = df[df['fold'] == fold].reset_index(drop=True)
 
-    train_loader = DataLoader(MFCCDataset(train_df, DATA_DIR, label_map, N_MFCC, MAX_LEN), batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(MFCCDataset(val_df, DATA_DIR, label_map, N_MFCC, MAX_LEN), batch_size=BATCH_SIZE)
+    train_dataset = MFCCDataset(train_df, DATA_DIR, label_map, N_MFCC, MAX_LEN, training=True)
+    val_dataset = MFCCDataset(val_df, DATA_DIR, label_map, N_MFCC, MAX_LEN, training=False)
 
-    model, optimizer, criterion = create_model_and_optimizer(label_map)
+    if USE_WEIGHTED_SAMPLER:
+        labels = train_df['label'].map(label_map).tolist()
+        label_counts = np.bincount(labels)
+        weights = 1. / label_counts
+        sample_weights = [weights[label] for label in labels]
+        sampler = WeightedRandomSampler(weights=sample_weights, num_samples=len(sample_weights), replacement=True)
+        train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, sampler=sampler)
+    else:
+        train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE)
+    label_counts = np.bincount(train_df['label'].map(label_map).tolist())
+
+    model, optimizer, scheduler, criterion = create_model_and_optimizer(label_map, label_counts)
 
     for epoch in range(EPOCHS):
         loss = train_one_epoch(model, train_loader, criterion, optimizer)
+        scheduler.step()
         print(f"  Epoch {epoch+1}/{EPOCHS} - Loss: {loss:.4f}")
 
     y_true, y_pred = evaluate(model, val_loader)
