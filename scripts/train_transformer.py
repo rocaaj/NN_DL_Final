@@ -25,7 +25,7 @@ N_MFCC           = 40
 MAX_LEN          = 200
 BATCH_SIZE       = 64
 EPOCHS           = 50
-LR               = 5e-5
+LR               = 1e-4
 PATIENCE         = 10
 
 USE_CLASS_WEIGHTS = True
