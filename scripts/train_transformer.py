@@ -21,7 +21,7 @@ np.random.seed(42)
 torch.manual_seed(42)
 
 DATA_DIR = 'data/'
-METADATA_CSV = 'metadata.csv'
+METADATA_CSV = 'UrbanSound8K.csv'
 N_MFCC = 40
 MAX_LEN = 200
 BATCH_SIZE = 16
