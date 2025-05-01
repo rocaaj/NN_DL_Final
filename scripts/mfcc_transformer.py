@@ -2,38 +2,20 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# -----------------------------
-# Positional Encoding
-# -----------------------------
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=500, dropout=0.1):
-        super(PositionalEncoding, self).__init__()
-        self.dropout = nn.Dropout(p=dropout)
-
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len).unsqueeze(1).float()
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-torch.log(torch.tensor(10000.0)) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0)
-
-        self.register_buffer('pe', pe)
-
-    def forward(self, x):
-        x = x + self.pe[:, :x.size(1)]
-        return self.dropout(x)
-
-# -----------------------------
-# Transformer-based Classifier for MFCCs
-# -----------------------------
-class MFCCTransformerClassifier(nn.Module):
+class CNNTransformerClassifier(nn.Module):
     def __init__(self, n_mfcc, num_classes, max_seq_len):
-        super(MFCCTransformerClassifier, self).__init__()
-        self.n_mfcc = n_mfcc
-        self.max_seq_len = max_seq_len
+        super(CNNTransformerClassifier, self).__init__()
 
-        self.input_proj = nn.Linear(n_mfcc, 128)
-        self.pos_encoder = PositionalEncoding(d_model=128, max_len=max_seq_len, dropout=0.1)
+        self.cnn = nn.Sequential(
+            nn.Conv1d(n_mfcc, 64, kernel_size=5, padding=2),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Conv1d(64, 128, kernel_size=5, padding=2),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+        )
+
+        self.positional_encoding = nn.Parameter(torch.randn(1, max_seq_len, 128))
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=128,
@@ -43,16 +25,19 @@ class MFCCTransformerClassifier(nn.Module):
             batch_first=True,
             norm_first=True
         )
-        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=2)
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=2)
 
         self.norm = nn.LayerNorm(128)
         self.dropout = nn.Dropout(0.3)
         self.classifier = nn.Linear(128, num_classes)
 
     def forward(self, x):
-        x = self.input_proj(x)
-        x = self.pos_encoder(x)
-        x = self.transformer_encoder(x)
-        x = self.norm(x[:, 0, :])
+        # x: (B, T, C) => (B, C, T)
+        x = x.transpose(1, 2)
+        x = self.cnn(x)               # (B, 128, T)
+        x = x.transpose(1, 2)         # (B, T, 128)
+        x = x + self.positional_encoding[:, :x.size(1), :]
+        x = self.transformer(x)       # (B, T, 128)
+        x = self.norm(x[:, 0, :])     # take CLS-like first token
         x = self.dropout(x)
         return self.classifier(x)

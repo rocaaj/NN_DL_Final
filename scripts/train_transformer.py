@@ -7,7 +7,7 @@ from sklearn.metrics import precision_recall_fscore_support
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-from mfcc_transformer import MFCCTransformerClassifier
+from mfcc_transformer import CNNTransformerClassifier
 import random
 
 # -----------------------------
@@ -25,15 +25,14 @@ N_MFCC           = 40
 MAX_LEN          = 200
 BATCH_SIZE       = 64
 EPOCHS           = 50
-LR               = 1e-4
-PATIENCE         = 5
+LR               = 5e-5
+PATIENCE         = 10
 
 USE_CLASS_WEIGHTS = True
 USE_DROPOUT       = True
 USE_LABEL_SMOOTHING = True
 USE_MIXUP         = True
 USE_WEIGHTED_SAMPLER = True
-
 
 NUM_WORKERS_TRAIN = 16
 NUM_WORKERS_VAL   = 8
@@ -165,7 +164,7 @@ def save_metrics_and_plots(metrics_df, class_names):
 # Model + Optimizer Setup
 # -----------------------------
 def create_model_and_optimizer(label_map, label_counts):
-    model = MFCCTransformerClassifier(n_mfcc=N_MFCC, num_classes=len(label_map), max_seq_len=MAX_LEN)
+    model = CNNTransformerClassifier(n_mfcc=N_MFCC, num_classes=len(label_map), max_seq_len=MAX_LEN)
     if USE_DROPOUT:
         model.dropout = nn.Dropout(0.3)
     model = model.to(device)
@@ -190,9 +189,9 @@ def run_fold(fold, df, label_map):
     train_dataset = MFCCDataset(train_df, label_map, cache_dir=MFCC_CACHE_DIR)
     val_dataset = MFCCDataset(val_df, label_map, cache_dir=MFCC_CACHE_DIR)
 
+    labels = train_df['label'].map(label_map).tolist()
+    label_counts = np.bincount(labels)
     if USE_WEIGHTED_SAMPLER:
-        labels = train_df['label'].map(label_map).tolist()
-        label_counts = np.bincount(labels)
         weights = 1. / label_counts
         sample_weights = [weights[label] for label in labels]
         sampler = WeightedRandomSampler(weights=sample_weights, num_samples=len(sample_weights), replacement=True)
@@ -205,7 +204,6 @@ def run_fold(fold, df, label_map):
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False,
                             num_workers=NUM_WORKERS_VAL, pin_memory=True, persistent_workers=True, prefetch_factor=PREFETCH_FACTOR)
 
-    label_counts = np.bincount(train_df['label'].map(label_map).tolist())
     model, optimizer, scheduler, criterion = create_model_and_optimizer(label_map, label_counts)
     early_stopper = EarlyStopping(patience=PATIENCE)
 
