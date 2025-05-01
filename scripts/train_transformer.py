@@ -34,6 +34,12 @@ USE_WEIGHTED_SAMPLER = True
 USE_AUGMENTATION = True
 USE_DROPOUT = True
 
+# Set CUDA device if available, useful for compatibility with various systems
+cuda_id = 0  # Change this if your partner uses a different GPU ID
+if torch.cuda.is_available():
+    torch.cuda.set_device(cuda_id)
+
+# Use CUDA if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # -----------------------------
