@@ -25,22 +25,53 @@ METADATA_CSV = '../data/UrbanSound8K.csv'
 N_MFCC = 40
 MAX_LEN = 200
 BATCH_SIZE = 16
-EPOCHS = 10
+EPOCHS = 50
 LR = 1e-4
+PATIENCE = 5
 
 USE_CLASS_WEIGHTS = True
 USE_NORMALIZED_MFCC = True
 USE_WEIGHTED_SAMPLER = True
 USE_AUGMENTATION = True
 USE_DROPOUT = True
+USE_LABEL_SMOOTHING = True
+USE_MIXUP = True
 
-# Set CUDA device if available, useful for compatibility with various systems
-cuda_id = 0  # Change this if your partner uses a different GPU ID
+cuda_id = 0
 if torch.cuda.is_available():
     torch.cuda.set_device(cuda_id)
 
-# Use CUDA if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# -----------------------------
+# Mixup Helper
+# -----------------------------
+def mixup_data(x, y, alpha=0.2):
+    lam = np.random.beta(alpha, alpha)
+    index = torch.randperm(x.size(0)).to(x.device)
+    mixed_x = lam * x + (1 - lam) * x[index, :]
+    y_a, y_b = y, y[index]
+    return mixed_x, y_a, y_b, lam
+
+def mixup_criterion(criterion, pred, y_a, y_b, lam):
+    return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
+
+# -----------------------------
+# EarlyStopping Helper
+# -----------------------------
+class EarlyStopping:
+    def __init__(self, patience=PATIENCE):
+        self.patience = patience
+        self.best_score = None
+        self.counter = 0
+
+    def step(self, score):
+        if self.best_score is None or score > self.best_score:
+            self.best_score = score
+            self.counter = 0
+        else:
+            self.counter += 1
+        return self.counter >= self.patience
 
 # -----------------------------
 # Dataset
@@ -92,8 +123,13 @@ def train_one_epoch(model, dataloader, criterion, optimizer):
     for x, y in dataloader:
         x, y = x.to(device), y.to(device)
         optimizer.zero_grad()
-        output = model(x)
-        loss = criterion(output, y)
+        if USE_MIXUP:
+            x, y_a, y_b, lam = mixup_data(x, y)
+            output = model(x)
+            loss = mixup_criterion(criterion, output, y_a, y_b, lam)
+        else:
+            output = model(x)
+            loss = criterion(output, y)
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
@@ -154,9 +190,9 @@ def create_model_and_optimizer(label_map, label_counts):
     if USE_CLASS_WEIGHTS:
         class_weights = [1.0 / label_counts[i] for i in range(len(label_map))]
         class_weights = torch.FloatTensor(class_weights).to(device)
-        criterion = nn.CrossEntropyLoss(weight=class_weights)
+        criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1 if USE_LABEL_SMOOTHING else 0.0)
     else:
-        criterion = nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss(label_smoothing=0.1 if USE_LABEL_SMOOTHING else 0.0)
     return model, optimizer, scheduler, criterion
 
 # -----------------------------
@@ -184,11 +220,17 @@ def run_fold(fold, df, label_map):
     label_counts = np.bincount(train_df['label'].map(label_map).tolist())
 
     model, optimizer, scheduler, criterion = create_model_and_optimizer(label_map, label_counts)
+    early_stopper = EarlyStopping(patience=PATIENCE)
 
     for epoch in range(EPOCHS):
         loss = train_one_epoch(model, train_loader, criterion, optimizer)
         scheduler.step()
-        print(f"  Epoch {epoch+1}/{EPOCHS} - Loss: {loss:.4f}")
+        y_true, y_pred = evaluate(model, val_loader)
+        _, _, f1, _ = precision_recall_fscore_support(y_true, y_pred, average='macro')
+        print(f"  Epoch {epoch+1}/{EPOCHS} - Loss: {loss:.4f} - Macro F1: {f1:.4f}")
+        if early_stopper.step(f1):
+            print("  Early stopping triggered")
+            break
 
     y_true, y_pred = evaluate(model, val_loader)
     precision, recall, f1, _ = precision_recall_fscore_support(y_true, y_pred, average='macro')

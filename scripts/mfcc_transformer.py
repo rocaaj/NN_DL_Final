@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 # -----------------------------
 # Positional Encoding
@@ -26,34 +27,32 @@ class PositionalEncoding(nn.Module):
 # Transformer-based Classifier for MFCCs
 # -----------------------------
 class MFCCTransformerClassifier(nn.Module):
-    def __init__(self, n_mfcc=40, num_classes=10, max_seq_len=200, d_model=128, nhead=4, num_layers=2, dim_feedforward=256, dropout=0.1):
+    def __init__(self, n_mfcc, num_classes, max_seq_len):
         super(MFCCTransformerClassifier, self).__init__()
-        self.input_proj = nn.Linear(n_mfcc, d_model)
-        self.positional_encoding = PositionalEncoding(d_model, max_len=max_seq_len, dropout=dropout)
+        self.n_mfcc = n_mfcc
+        self.max_seq_len = max_seq_len
+
+        self.input_proj = nn.Linear(n_mfcc, 128)
+        self.pos_encoder = PositionalEncoding(d_model=128, max_len=max_seq_len, dropout=0.1)
 
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=nhead,
-            dim_feedforward=dim_feedforward,
-            dropout=dropout,
-            batch_first=True
+            d_model=128,
+            nhead=4,
+            dim_feedforward=256,
+            dropout=0.3,
+            batch_first=True,
+            norm_first=True
         )
-        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=2)
 
-        self.pool = nn.AdaptiveAvgPool1d(1)
-        self.classifier = nn.Sequential(
-            nn.Linear(d_model, 64),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(64, num_classes)
-        )
+        self.norm = nn.LayerNorm(128)
+        self.dropout = nn.Dropout(0.3)
+        self.classifier = nn.Linear(128, num_classes)
 
     def forward(self, x):
-        # x: [batch_size, time_steps, n_mfcc]
-        x = self.input_proj(x)                      # -> [batch_size, time_steps, d_model]
-        x = self.positional_encoding(x)             # -> [batch_size, time_steps, d_model]
-        x = x.transpose(0, 1)                       # -> [time_steps, batch_size, d_model]
-        x = self.transformer_encoder(x)             # -> [time_steps, batch_size, d_model]
-        x = x.transpose(0, 1)                       # -> [batch_size, time_steps, d_model]
-        x = self.pool(x.transpose(1, 2)).squeeze(2) # -> [batch_size, d_model]
-        return self.classifier(x)                   # -> [batch_size, num_classes]
+        x = self.input_proj(x)
+        x = self.pos_encoder(x)
+        x = self.transformer_encoder(x)
+        x = self.norm(x[:, 0, :])
+        x = self.dropout(x)
+        return self.classifier(x)
