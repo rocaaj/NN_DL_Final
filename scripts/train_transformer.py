@@ -3,50 +3,53 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-from sklearn.metrics import classification_report
+from sklearn.metrics import precision_recall_fscore_support
+import pandas as pd
+import matplotlib.pyplot as plt
 import librosa
 import numpy as np
-from model import MFCCTransformerClassifier  # assumes your model is in model.py
+from mfcc_transformer import MFCCTransformerClassifier
+import random
 
 # -----------------------------
 # Config
 # -----------------------------
-DATA_DIR = 'data/'  # Folder with .wav files
-LABELS = {'drill': 0, 'hammer': 1, 'jigsaw': 2, 'screwdriver': 3}  # Adjust to your dataset
+
+# set seeds for reproducibility
+random.seed(42)
+np.random.seed(42)
+torch.manual_seed(42)
+
+DATA_DIR = 'data/'
+METADATA_CSV = 'metadata.csv'
 N_MFCC = 40
 MAX_LEN = 200
 BATCH_SIZE = 16
-EPOCHS = 15
+EPOCHS = 10
 LR = 1e-4
 
 # -----------------------------
 # Dataset
 # -----------------------------
 class MFCCDataset(Dataset):
-    def __init__(self, root_dir, label_map, n_mfcc=40, max_len=200):
-        self.filepaths = []
-        self.labels = []
+    def __init__(self, df, data_dir, label_map, n_mfcc=40, max_len=200):
+        self.data_dir = data_dir
+        self.df = df
+        self.label_map = label_map
         self.n_mfcc = n_mfcc
         self.max_len = max_len
 
-        for label_name, label_id in label_map.items():
-            folder = os.path.join(root_dir, label_name)
-            for file in os.listdir(folder):
-                if file.endswith('.wav'):
-                    self.filepaths.append(os.path.join(folder, file))
-                    self.labels.append(label_id)
-
     def __len__(self):
-        return len(self.filepaths)
+        return len(self.df)
 
     def __getitem__(self, idx):
-        path = self.filepaths[idx]
-        label = self.labels[idx]
+        row = self.df.iloc[idx]
+        file_path = os.path.join(self.data_dir, f"fold{row['fold']}", row['filename'])
+        label = self.label_map[row['label']]
 
-        y, sr = librosa.load(path, sr=None)
+        y, sr = librosa.load(file_path, sr=None)
         mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=self.n_mfcc).T
 
-        # Pad or truncate
         if mfcc.shape[0] < self.max_len:
             pad = np.zeros((self.max_len - mfcc.shape[0], self.n_mfcc))
             mfcc = np.vstack([mfcc, pad])
@@ -56,7 +59,7 @@ class MFCCDataset(Dataset):
         return torch.tensor(mfcc, dtype=torch.float32), label
 
 # -----------------------------
-# Train and Evaluate
+# Training / Evaluation
 # -----------------------------
 def train_one_epoch(model, dataloader, criterion, optimizer):
     model.train()
@@ -79,29 +82,97 @@ def evaluate(model, dataloader):
             preds = output.argmax(dim=1).numpy()
             y_pred.extend(preds)
             y_true.extend(y)
-    print(classification_report(y_true, y_pred, target_names=LABELS.keys()))
+    return y_true, y_pred
 
 # -----------------------------
-# Main
+# Output Utilities
 # -----------------------------
-def main():
-    dataset = MFCCDataset(DATA_DIR, LABELS, n_mfcc=N_MFCC, max_len=MAX_LEN)
-    train_size = int(0.8 * len(dataset))
-    val_size = len(dataset) - train_size
-    train_set, val_set = torch.utils.data.random_split(dataset, [train_size, val_size])
+def save_metrics_and_plots(metrics_df, class_names):
+    metrics_df.to_csv("cv_metrics_report.csv", index=False)
 
-    train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(val_set, batch_size=BATCH_SIZE)
+    plt.figure(figsize=(8, 4))
+    plt.plot(metrics_df['fold'], metrics_df['avg_loss'], marker='o', label='Avg Loss')
+    plt.title("Average Loss per Fold")
+    plt.xlabel("Fold")
+    plt.ylabel("Loss")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("avg_loss_per_fold.png")
+    plt.show()
 
-    model = MFCCTransformerClassifier(n_mfcc=N_MFCC, num_classes=len(LABELS), max_seq_len=MAX_LEN)
+    plt.figure(figsize=(8, 4))
+    plt.plot(metrics_df['fold'], metrics_df['macro_f1'], marker='s', color='green', label='Macro F1')
+    plt.title("Macro F1-score per Fold")
+    plt.xlabel("Fold")
+    plt.ylabel("Macro F1-score")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("macro_f1_per_fold.png")
+    plt.show()
 
+# -----------------------------
+# Model + Optimizer Setup
+# -----------------------------
+def create_model_and_optimizer(label_map):
+    model = MFCCTransformerClassifier(n_mfcc=N_MFCC, num_classes=len(label_map), max_seq_len=MAX_LEN)
     optimizer = optim.AdamW(model.parameters(), lr=LR)
     criterion = nn.CrossEntropyLoss()
+    return model, optimizer, criterion
+
+# -----------------------------
+# Fold Training Logic
+# -----------------------------
+def run_fold(fold, df, label_map):
+    print(f"\nFold {fold}/10")
+    train_df = df[df['fold'] != fold].reset_index(drop=True)
+    val_df = df[df['fold'] == fold].reset_index(drop=True)
+
+    train_loader = DataLoader(MFCCDataset(train_df, DATA_DIR, label_map, N_MFCC, MAX_LEN), batch_size=BATCH_SIZE, shuffle=True)
+    val_loader = DataLoader(MFCCDataset(val_df, DATA_DIR, label_map, N_MFCC, MAX_LEN), batch_size=BATCH_SIZE)
+
+    model, optimizer, criterion = create_model_and_optimizer(label_map)
 
     for epoch in range(EPOCHS):
         loss = train_one_epoch(model, train_loader, criterion, optimizer)
-        print(f"Epoch {epoch+1}/{EPOCHS} - Loss: {loss:.4f}")
-        evaluate(model, val_loader)
+        print(f"  Epoch {epoch+1}/{EPOCHS} - Loss: {loss:.4f}")
+
+    y_true, y_pred = evaluate(model, val_loader)
+    precision, recall, f1, _ = precision_recall_fscore_support(y_true, y_pred, average='macro')
+    _, _, per_class_f1, _ = precision_recall_fscore_support(y_true, y_pred, average=None)
+
+    print(f"  Fold {fold} → Precision: {precision:.3f}, Recall: {recall:.3f}, F1: {f1:.3f}")
+    return loss, f1, per_class_f1
+
+# -----------------------------
+# Main Execution
+# -----------------------------
+def main():
+    df = pd.read_csv(METADATA_CSV)
+    df = df.rename(columns={'slice_file_name': 'filename', 'class': 'label'})
+    class_names = sorted(df['label'].unique())
+    label_map = {label: i for i, label in enumerate(class_names)}
+
+    fold_losses = []
+    fold_macro_f1s = []
+    fold_per_class_f1s = []
+
+    for fold in range(1, 11):
+        loss, f1, per_class_f1 = run_fold(fold, df, label_map)
+        fold_losses.append(loss)
+        fold_macro_f1s.append(f1)
+        fold_per_class_f1s.append(per_class_f1)
+
+    metrics_df = pd.DataFrame({
+        'fold': list(range(1, 11)),
+        'avg_loss': fold_losses,
+        'macro_f1': fold_macro_f1s
+    })
+    for i, class_name in enumerate(class_names):
+        metrics_df[class_name] = [f[i] for f in fold_per_class_f1s]
+
+    save_metrics_and_plots(metrics_df, class_names)
 
 if __name__ == "__main__":
     main()
