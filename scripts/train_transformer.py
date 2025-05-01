@@ -15,43 +15,57 @@ from collections import Counter
 # -----------------------------
 # Config
 # -----------------------------
-
 random.seed(42)
 np.random.seed(42)
 torch.manual_seed(42)
+torch.backends.cudnn.benchmark = True
 
-DATA_DIR = '../data/'
-METADATA_CSV = '../data/UrbanSound8K.csv'
-N_MFCC = 40
-MAX_LEN = 200
-BATCH_SIZE = 16
-EPOCHS = 50
-LR = 1e-4
-PATIENCE = 5
+DATA_DIR      = '../data/'
+METADATA_CSV  = '../data/UrbanSound8K.csv'
+N_MFCC        = 40
+MAX_LEN       = 200
+BATCH_SIZE    = 64
+EPOCHS        = 50
+LR            = 1e-4
+PATIENCE      = 5
 
-USE_CLASS_WEIGHTS = True
-USE_NORMALIZED_MFCC = True
+USE_CLASS_WEIGHTS    = True
+USE_NORMALIZED_MFCC  = True
 USE_WEIGHTED_SAMPLER = True
-USE_AUGMENTATION = True
-USE_DROPOUT = True
-USE_LABEL_SMOOTHING = True
-USE_MIXUP = True
+USE_AUGMENTATION     = True
+USE_DROPOUT          = True
+USE_LABEL_SMOOTHING  = True
+USE_MIXUP            = True
 
+NUM_WORKERS_TRAIN = 4
+NUM_WORKERS_VAL   = 2
+PREFETCH_FACTOR   = 2
+
+# -----------------------------
+# Device setup
+# -----------------------------
 cuda_id = 0
-if torch.cuda.is_available():
-    torch.cuda.set_device(cuda_id)
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+assert torch.cuda.is_available(), "CUDA required but not available"
+torch.cuda.set_device(cuda_id)
+device = torch.device(f'cuda:{cuda_id}')
+print(f"Running on {torch.cuda.get_device_name(cuda_id)}")
 
 # -----------------------------
 # Mixup Helper
 # -----------------------------
 def mixup_data(x, y, alpha=0.2):
-    lam = np.random.beta(alpha, alpha)
-    index = torch.randperm(x.size(0)).to(x.device)
-    mixed_x = lam * x + (1 - lam) * x[index, :]
-    y_a, y_b = y, y[index]
-    return mixed_x, y_a, y_b, lam
+    if alpha > 0:
+        lam = torch.distributions.Beta(alpha, alpha).sample().to(x.device)
+    else:
+        lam = torch.tensor(1.0, device=x.device)
+    
+    # Ensure lam is float32
+    lam = lam.to(dtype=x.dtype)  # Fixes the dtype mismatch error
+
+    idx = torch.randperm(x.size(0), device=x.device)
+    mixed_x = lam * x + (1 - lam) * x[idx]
+    return mixed_x, y, y[idx], lam
+
 
 def mixup_criterion(criterion, pred, y_a, y_b, lam):
     return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
