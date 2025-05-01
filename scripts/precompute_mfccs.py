@@ -1,3 +1,42 @@
+"""
+precompute_mfccs.py
+
+Author: Anthony Roca
+---------------------
+
+This script preprocesses audio files from the UrbanSound8K dataset and extracts
+Mel-frequency cepstral coefficients (MFCCs) for each clip. The resulting MFCC tensors
+are normalized, padded/truncated to a fixed length, and cached as .pt files for fast loading
+during training.
+
+Key Features:
+-------------
+- Input: UrbanSound8K WAV files located in fold subdirectories (e.g., fold1, fold2, ...)
+- Output: Normalized MFCC tensors saved to ../data/mfcc_cache/
+- MFCC Parameters:
+    * n_mfcc: 40
+    * FFT size: 2048
+    * Hop length: 512
+    * n_mels: 128
+- Normalization: Per-feature standardization
+- Padding: Zero-padded or truncated to a fixed MAX_LEN of 200 frames
+- Error Handling: Skips and logs any failed audio files
+
+Usage:
+------
+$ python precompute_mfcc.py
+
+Output:
+-------
+- A tensor file for each audio clip saved as {fold}_{filename}.pt
+- Printed status message on completion
+
+Acknowledgment:
+---------------
+This implementation benefited from iterative debugging and generalization guidance provided by OpenAI's ChatGPT.
+"""
+
+
 import os
 import torch
 import torchaudio

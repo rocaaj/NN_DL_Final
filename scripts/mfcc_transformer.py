@@ -1,3 +1,33 @@
+"""
+CNNTransformerClassifier (PyTorch)
+
+Author: Anthony Roca
+--------------------
+
+This module defines a hybrid CNN + Transformer architecture for audio classification 
+using precomputed MFCC features. It is optimized for the UrbanSound8K dataset and 
+designed to capture both local and global temporal patterns in time-series MFCC inputs.
+
+Architecture Summary:
+---------------------
+- CNN stack: 3 1D convolutional layers for local feature extraction
+- Positional encoding: Learnable embeddings to inject temporal order
+- Transformer encoder: 4-layer transformer with 8 heads and FFN size 512
+- Attention pooling: Learns temporal weights for aggregating sequence features
+- Final classifier: LayerNorm, dropout, linear output for 10-class classification
+
+Optimized for GPU usage and integration with training scripts that use mixup, 
+focal loss, label smoothing, and 10-fold cross-validation.
+
+Input shape:  (batch_size, sequence_length, n_mfcc)
+Output shape: (batch_size, num_classes)
+
+Acknowledgment:
+---------------
+This implementation benefited from iterative debugging and generalization guidance provided by OpenAI's ChatGPT.
+"""
+
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

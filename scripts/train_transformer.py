@@ -1,3 +1,44 @@
+"""
+train_transformer.py
+
+Author: Anthony Roca
+--------------------
+
+This script trains a hybrid CNN + Transformer model for environmental sound classification
+on the UrbanSound8K dataset using 10-fold cross-validation. It is optimized for GPU usage
+and integrates several advanced training strategies to improve generalization and robustness.
+
+Key Features:
+-------------
+- Model: CNN backbone for local feature extraction + Transformer encoder for global context
+- Input: Precomputed MFCC tensors stored in ../data/mfcc_cache/
+- Loss Function: Focal loss for addressing class imbalance
+- Regularization: Mixup data augmentation, label smoothing, dropout
+- Evaluation: Macro precision, recall, and F1-score reported per fold
+- Optimizations: Weighted sampling, early stopping, cosine learning rate scheduler
+- GPU Acceleration: Utilizes PyTorch DataLoader with multiple workers and persistent loading
+
+Expected Input Shape: (batch_size, time_steps, n_mfcc)
+Output: Class probability logits for 10 sound categories
+
+Usage:
+------
+1. Ensure that precomputed MFCCs are stored in `../data/mfcc_cache/`
+2. Run the script directly:
+   $ python train_transformer.py
+
+Output:
+-------
+- Console logs with loss and F1 per epoch and per fold
+- CSV report of average loss and macro F1 per fold
+- Line plots of loss and F1 across folds (saved as PNGs)
+
+Acknowledgment:
+---------------
+This implementation benefited from iterative debugging and generalization guidance provided by OpenAI's ChatGPT.
+"""
+
+
 import os
 import torch
 import torch.nn as nn
