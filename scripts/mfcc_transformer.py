@@ -24,9 +24,8 @@ Output shape: (batch_size, num_classes)
 
 Acknowledgment:
 ---------------
-This implementation benefited from iterative debugging and generalization guidance provided by OpenAI's ChatGPT.
+This implementation benefited from iterative debugging and guidance provided by OpenAI's ChatGPT.
 """
-
 
 import torch
 import torch.nn as nn
@@ -36,6 +35,7 @@ class CNNTransformerClassifier(nn.Module):
     def __init__(self, n_mfcc, num_classes, max_seq_len):
         super(CNNTransformerClassifier, self).__init__()
 
+        # Convolutional block to extract local time-frequency features
         self.cnn = nn.Sequential(
             nn.Conv1d(n_mfcc, 64, kernel_size=5, padding=2),
             nn.BatchNorm1d(64),
@@ -48,8 +48,10 @@ class CNNTransformerClassifier(nn.Module):
             nn.ReLU(),
         )
 
+        # Learnable positional encoding to preserve sequence order
         self.positional_encoding = nn.Parameter(torch.randn(1, max_seq_len, 256))
 
+        # Transformer encoder to capture global temporal dependencies
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=256,
             nhead=8,
@@ -60,26 +62,34 @@ class CNNTransformerClassifier(nn.Module):
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=4)
 
+        # Attention pooling layer to weigh time steps
         self.att_pool = nn.Sequential(
             nn.Linear(256, 1),
             nn.Softmax(dim=1)
         )
 
+        # Classification head: normalization, dropout, and final prediction layer
         self.norm = nn.LayerNorm(256)
         self.dropout = nn.Dropout(0.2)
         self.classifier = nn.Linear(256, num_classes)
 
     def forward(self, x):
-        # x: (B, T, C) => (B, C, T)
+        # Input: (B, T, C) → CNN expects (B, C, T)
         x = x.transpose(1, 2)
-        x = self.cnn(x)               # (B, 256, T)
-        x = x.transpose(1, 2)         # (B, T, 256)
+        x = self.cnn(x)               # Apply CNN: (B, 256, T)
+        x = x.transpose(1, 2)         # Back to (B, T, 256) for transformer
+
+        # Add positional encoding
         x = x + self.positional_encoding[:, :x.size(1), :]
-        x = self.transformer(x)       # (B, T, 256)
 
-        attn_weights = self.att_pool(x)         # (B, T, 1)
-        pooled = torch.sum(x * attn_weights, dim=1)  # (B, 256)
+        # Transformer encoder
+        x = self.transformer(x)
 
+        # Apply attention-based pooling
+        attn_weights = self.att_pool(x)               # (B, T, 1)
+        pooled = torch.sum(x * attn_weights, dim=1)   # Weighted sum: (B, 256)
+
+        # Final prediction
         pooled = self.norm(pooled)
         pooled = self.dropout(pooled)
         return self.classifier(pooled)
