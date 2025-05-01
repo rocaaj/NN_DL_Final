@@ -20,8 +20,8 @@ random.seed(42)
 np.random.seed(42)
 torch.manual_seed(42)
 
-DATA_DIR = 'data/'
-METADATA_CSV = 'UrbanSound8K.csv'
+DATA_DIR = '../data/'
+METADATA_CSV = '../data/UrbanSound8K.csv'
 N_MFCC = 40
 MAX_LEN = 200
 BATCH_SIZE = 16
@@ -67,7 +67,7 @@ def train_one_epoch(model, dataloader, criterion, optimizer):
     for x, y in dataloader:
         optimizer.zero_grad()
         output = model(x)
-        loss = criterion(output, torch.tensor(y))
+        loss = criterion(output, y)
         loss.backward()
         optimizer.step()
         total_loss += loss.item()

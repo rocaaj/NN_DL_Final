@@ -36,6 +36,7 @@ class MFCCTransformerClassifier(nn.Module):
             nhead=nhead,
             dim_feedforward=dim_feedforward,
             dropout=dropout
+            batch_first=True
         )
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
