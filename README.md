@@ -3,17 +3,38 @@
 
 ---
 ### Baseline model
+#### Dependencies
+- Python 3.8+
+- torch 2.7.0+cu118
+- torchaudio 2.7.0+cu118
+- torchvision 0.22.0+cu118
+- pandas 2.2.3
+- numpy 2.2.5
+- matplotlib 3.10.1
+- scikit-learn 1.6.1
+- librosa 0.11.0
 
+### How to run
 ```bash
-
-
+python train_concat_model.py
 ```
 
 
 
 ---
 ### CNN+Transfomer Hybrid model
+#### Dependencies
+- Python 3.8+
+- torch 2.7.0+cu118
+- torchaudio 2.7.0+cu118
+- torchvision 0.22.0+cu118
+- pandas 2.2.3
+- numpy 2.2.5
+- matplotlib 3.10.1
+- scikit-learn 1.6.1
+- tqdm 4.65.0
 
+### How to run
 ```bash
 python precompute_mfccs.py
 python train_transformer.py
@@ -37,7 +58,6 @@ This script performs 10-fold cross-validation on the UrbanSound8K dataset, saves
 - **torch 2.7.0+cu118**
 - **torchaudio 2.7.0+cu118**
 - **torchvision 0.22.0+cu118**
-
 
 ### How to run
 ```bash
