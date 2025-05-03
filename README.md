@@ -15,8 +15,8 @@
 ### CNN+Transfomer Hybrid model
 
 ```bash
-
-
+python precompute_mfccs.py
+python train_transformer.py
 ```
 
 
